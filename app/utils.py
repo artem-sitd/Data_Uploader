@@ -1,7 +1,5 @@
-from time import time
 import pandas as pd
 import numpy as np
-from scipy.signal import find_peaks
 import plotly.graph_objs as go
 from plotly.offline import plot
 from .models import Dataset
@@ -19,76 +17,71 @@ def calculate_statistics(df):
 
 
 def detect_peaks(df):
-    peaks, _ = find_peaks(df["angle"].values, height=20)
-    return len(peaks)
+    angles = df["angle"].values
+    peaks = 0
+    last_min = angles[0]
+
+    for angle in angles[1:]:
+        if angle < last_min:
+            last_min = angle
+        elif angle - last_min > 20:
+            peaks += 1
+            last_min = angle
+
+    return peaks
 
 
 def build_plot(df):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df["timestamp"], y=df["angle"], mode='lines', name='Angle'))
     fig.update_layout(title='График угла', xaxis_title='Timestamp', yaxis_title='Angle')
-    return plot(fig, output_type='div', include_plotlyjs=False)
+    return plot(fig, output_type='div', include_plotlyjs="cdn")
 
 
 def import_dataset_from_excel(path: str, name: str):
-    start = time()
-    print(f'начало pd.read_excel(path)')
-
     df = pd.read_excel(path)
-    print(f'конец pd.read_excel(path) {time() - start}')
 
-    # Шаг 2: создаём запись о наборе данных
-    start = time()
-    print(f'начало new_ds = Dataset(name=name)')
-
+    # создаём запись о наборе данных
     new_ds = Dataset(name=name)
     db.session.add(new_ds)
     db.session.commit()
-    print(f'конец new_ds = Dataset(name=name) {time() - start}')
 
-    # Шаг 3: добавляем колонку dataset_id
-    start = time()
-    print(f' добавление dataset_id')
+    # анализируем до записи в базу
     df["dataset_id"] = new_ds.id
-    print(f'конец dataset_id {time() - start}')
-
-    # Приводим типы для совместимости
-    start = time()
-    print(f'начало df = df.astype(')
     df = df.astype({
-        "timestamp": "int32",
-        "emg1": "int32",
-        "emg2": "int32",
-        "emg3": "int32",
-        "emg4": "int32",
-        "angle": "int32",
-        "dataset_id": "int32"
+        "timestamp": "int32", "emg1": "int32", "emg2": "int32",
+        "emg3": "int32", "emg4": "int32", "angle": "int32", "dataset_id": "int32"
     })
-    print(f'конец df = df.astype( {time() - start} )')
 
-    # Шаг 4: сериализация в память (StringIO)
-    start = time()
-    print(f'начало buffer = io.StringIO()')
+    stats = calculate_statistics(df)
+    peaks = detect_peaks(df)
+    plot_html = build_plot(df)
+
+    # сохраняем статистику в отдельную таблицу
+    from .models import DatasetStats
+    stats_entry = DatasetStats(
+        dataset_id=int(new_ds.id),
+        mean=float(stats["mean"]),
+        max=int(stats["max"]),
+        std=float(stats["std"]),
+        peaks=int(peaks),
+        plot_html=plot_html
+    )
+
+    db.session.add(stats_entry)
+    db.session.commit()
+
+    # вставляем в базу
     buffer = io.StringIO()
     df.to_csv(buffer, index=False, header=False)
     buffer.seek(0)
-    print(f'конец buffer = io.StringIO() {time() - start}')
 
-    # Шаг 5: прямое подключение к PostgreSQL
-    start = time()
-    print(f'начало connection = db.engine.raw_connection()')
     connection = db.engine.raw_connection()
     cursor = connection.cursor()
-
-    cursor.copy_expert(
-        """
+    cursor.copy_expert("""
         COPY datapoints (timestamp, emg1, emg2, emg3, emg4, angle, dataset_id)
         FROM STDIN WITH CSV
-        """,
-        buffer
-    )
-
+    """, buffer)
     connection.commit()
     cursor.close()
     connection.close()
-    print(f'конец connection = db.engine.raw_connection() {time() - start}')
