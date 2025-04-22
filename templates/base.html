@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>EMG Data App</title>
+</head>
+<body>
+<header>
+    <h1>EMG Анализатор</h1>
+    <form action="{{ url_for('main.upload') }}" method="post" enctype="multipart/form-data">
+        <input type="text" name="name" placeholder="Название набора" required>
+        <input type="file" name="file" accept=".xlsx" required>
+        <button type="submit">Загрузить Excel</button>
+    </form>
+    <hr>
+</header>
+
+{% block content %}{% endblock %}
+</body>
+</html>

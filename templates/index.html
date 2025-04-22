@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>Доступные наборы данных:</h2>
+<ul>
+    {% for ds in datasets %}
+    <li><a href="{{ url_for('main.view_dataset', dataset_id=ds.id) }}">{{ ds.name }}</a></li>
+    {% endfor %}
+</ul>
+{% endblock %}

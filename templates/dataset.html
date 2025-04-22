@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>Набор: {{ dataset.name }}</h2>
+<p>Среднее значение: {{ stats.mean }}</p>
+<p>Максимум: {{ stats.max }}</p>
+<p>Стандартное отклонение: {{ stats.std }}</p>
+<p>Количество пиков (angle > 20): {{ peaks }}</p>
+<hr>
+<div>{{ plot_div | safe }}</div>
+{% endblock %}
