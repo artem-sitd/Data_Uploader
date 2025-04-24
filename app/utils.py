@@ -7,6 +7,8 @@ from .db import db
 import io
 
 
+# здесь используется нумпи, потому что массив данных большой,
+# средствами питона будет выполняться дольше, чем нумпи, написанный на С
 def calculate_statistics(df):
     angle = df["angle"].values
     return {
@@ -16,21 +18,23 @@ def calculate_statistics(df):
     }
 
 
+# алгоритм счетчика пиков
 def detect_peaks(df):
     angles = df["angle"].values
     peaks = 0
     last_min = angles[0]
 
     for angle in angles[1:]:
-        if angle < last_min:
-            last_min = angle
-        elif angle - last_min > 20:
+        if abs(angle - last_min) > 20:
             peaks += 1
+            last_min = angle
+        if angle < last_min:
             last_min = angle
 
     return peaks
 
 
+# построение графика plotly
 def build_plot(df):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df["timestamp"], y=df["angle"], mode='lines', name='Angle'))
@@ -38,6 +42,9 @@ def build_plot(df):
     return plot(fig, output_type='div', include_plotlyjs="cdn")
 
 
+# сохранение файла в свое хранилище (можно переделать в S3), создание записи в БД Dataset
+# парсинг ексель файла, приведение типов для быстрой вставки в БД
+# следом рассчет необходимых показателей и вставка их в БД, чтобы не выполнять каждый раз рассчеты при доступе к эндпойнту
 def import_dataset_from_excel(path: str, name: str):
     df = pd.read_excel(path)
 
@@ -57,7 +64,8 @@ def import_dataset_from_excel(path: str, name: str):
     peaks = detect_peaks(df)
     plot_html = build_plot(df)
 
-    # сохраняем статистику в отдельную таблицу
+    # сохраняем статистику в отдельную таблицу, для обращения в БД,
+    # вместо вычисления при обращении к ручке
     from .models import DatasetStats
     stats_entry = DatasetStats(
         dataset_id=int(new_ds.id),
@@ -71,17 +79,29 @@ def import_dataset_from_excel(path: str, name: str):
     db.session.add(stats_entry)
     db.session.commit()
 
-    # вставляем в базу
+    # преобразовываем массив в CSV формат,
+    # и используем низкоуровневый bulk загрузчик
+
+    # создаем поток для чтения файла из оперативной памяти
     buffer = io.StringIO()
+
+    # преобразовываем pandas dataframe в формат CSV + храним его в RAM
     df.to_csv(buffer, index=False, header=False)
+
+    # ставим "курсор в начало"
     buffer.seek(0)
 
+    # открываем транзакцию для низкоуровнегой записи
+    # db.engine - хранит данные о подключении из конфига)
     connection = db.engine.raw_connection()
-    cursor = connection.cursor()
-    cursor.copy_expert("""
-        COPY datapoints (timestamp, emg1, emg2, emg3, emg4, angle, dataset_id)
-        FROM STDIN WITH CSV
-    """, buffer)
-    connection.commit()
-    cursor.close()
-    connection.close()
+    try:
+        with connection.cursor() as cursor:
+            cursor.copy_expert("""
+                COPY datapoints (timestamp, emg1, emg2, emg3, emg4, angle, dataset_id)
+                FROM STDIN WITH CSV
+            """, buffer)
+        connection.commit()
+    except Exception as e:
+        print(f'ошибка в бд: {e}')
+    finally:
+        connection.close()
